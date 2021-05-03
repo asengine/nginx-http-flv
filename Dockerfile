@@ -32,10 +32,10 @@ RUN CONFIG="\
     && apk del .build-deps
 
 COPY nginx.conf /etc/nginx/nginx.conf
-# COPY conf.d/ /etc/nginx/conf.d/
-# COPY www/ /var/www/
+COPY conf.d/ /etc/nginx/conf.d/
+COPY www/ /var/www/
 
 EXPOSE 80 1935
 
-# ENTRYPOINT ["nginx", "-g", "daemon off;"]
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["nginx", "-g", "daemon off;"]
+# CMD ["nginx", "-g", "daemon off;"]
