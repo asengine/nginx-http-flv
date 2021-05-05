@@ -6,3 +6,8 @@ docker build -f Dockerfile -t nginx-http-flv .
 
 # docker hub
 https://hub.docker.com/repository/docker/asengine7813/nginx-http-flv
+
+# Usage
+cd k8s
+
+kubectl apply -f .
