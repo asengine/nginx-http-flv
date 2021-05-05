@@ -1,0 +1,195 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-http-flv
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-http-flv
+  template:
+    metadata:
+      name: nginx-http-flv
+      labels:
+        app: nginx-http-flv
+    spec:
+      containers:
+        - image: asengine7813/nginx-http-flv:slim
+          name: nginx-http-flv
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: hls-file
+              mountPath: /usr/local/nginx/html/hls-file
+            - name: nginx-conf #如果不使用以下配置，可以删除，使用默认配置
+              mountPath: /etc/nginx/nginx.conf
+              readOnly: true
+              subPath: nginx.conf
+          ports:
+            - name: port1935
+              containerPort: 1935
+              protocol: TCP
+            - name: port80
+              containerPort: 80
+              protocol: TCP
+      volumes:
+        - name: hls-file
+          persistentVolumeClaim:
+            claimName: hls-file-pvc
+        - name: nginx-conf #如果不使用以下配置，可以删除，使用默认配置
+          configMap:
+            name: nginx-http-flv-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-http-flv
+spec:
+  ports:
+    - name: port1935
+      port: 1935
+      targetPort: 1935
+      nodePort: 1935
+    - name: port80
+      port: 80
+      targetPort: 80
+      nodePort: 1980
+  type: NodePort
+  selector:
+    app: nginx-http-flv
+---
+
+#如果不使用以下配置，可以删除，使用默认配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-http-flv-config
+  labels:
+    app: nginx-http-flv
+data:
+  nginx.conf: |
+    #user  nobody;
+    worker_processes  auto;
+    #worker_cpu_affinity  0001 0010 0100 1000; #只能用于 FreeBSD 和 Linux
+    worker_cpu_affinity  auto; #1.9.10 以及之后的版本
+    #error_log logs/error.log error;
+    error_log /var/log/nginx/error.log error;
+
+    #如果此模块被编译为动态模块并且要使用与 RTMP 相关的功
+    #能时，必须指定下面的配置项并且它必须位于 events 配置
+    #项之前，否则 NGINX 启动时不会加载此模块或者加载失败
+    load_module modules/ngx_http_flv_live_module.so;
+
+    events {
+        worker_connections  4096;
+    }
+
+    http {
+        include       mime.types;
+        default_type  application/octet-stream;
+        keepalive_timeout  65;
+
+        sendfile        on;
+        #tcp_nopush     on;
+
+        server {
+            listen 80;
+            server_name localhost;
+            location / {
+                root html;
+                index index.html index.htm;
+            }
+            error_page 500 502 503 504 /50x.html;
+            location = /50x.html {
+                root html;
+            }
+
+            location /hls {  #添加视频流存放地址。
+                types {
+                    application/vnd.apple.mpegurl m3u8;
+                    video/mp2t ts;
+                }
+                #访问权限开启，否则访问这个地址会报403
+                autoindex on;
+                alias /usr/local/nginx/html/hls-file/;#视频流存放地址，与上面的hls_path相对应
+                expires -1;
+                add_header 'Access-Control-Allow-Origin' '*';
+                add_header 'Access-Control-Allow-Credentials' 'true';
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+                add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type';
+                add_header 'Cache-Control' 'no-cache';
+            }
+
+            location /flv {
+                flv_live on;
+                chunked_transfer_encoding  on;
+                add_header 'Access-Control-Allow-Origin' '*';
+                add_header 'Access-Control-Allow-Credentials' 'true';
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+                add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type';
+                add_header 'Cache-Control' 'no-cache';
+            }
+
+            location /dash {
+                root /tmp;
+                add_header 'Access-Control-Allow-Origin' '*';
+                add_header 'Access-Control-Allow-Credentials' 'true';
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+                add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type';
+                add_header 'Cache-Control' 'no-cache';
+            }
+
+            location /stat {
+                rtmp_stat all;
+                rtmp_stat_stylesheet stat.xsl;
+            }
+
+            location /stat.xsl {
+              root /opt/module/nginx-http-flv-module/;
+            }
+
+            location /control {
+                rtmp_control all; #rtmp 控制模块的配置
+            }
+        }
+    }
+
+    rtmp_auto_push on;
+    rtmp_auto_push_reconnect 1s;
+    #rtmp_socket_dir /tmp;
+
+    # 在文件底部添加下面内容：
+    rtmp {
+        out_queue           4096;
+        out_cork            8;
+        max_streams         128;
+        timeout             15s;
+        drop_idle_publisher 15s;
+
+        #log_interval 5s; #log 模块在 access.log 中记录日志的间隔时间，对调试非常有用
+        #log_size     1m; #log 模块用来记录日志的缓冲区大小
+
+        server {
+            listen 1935; #监听的端口
+            chunk_size 4000;
+
+            application myapp {
+                live on;
+                gop_cache on; #打开 GOP 缓存，减少首屏等待时间
+            }
+
+            application live {
+                live on; #开启实时
+                hls on; #开启hls
+                hls_path /usr/local/nginx/html/hls-file; #rtmp推流请求路径，文件存放路径
+                hls_fragment 5s; #每个TS文件包含5秒的视频内容
+                gop_cache on; #打开 GOP 缓存，减少首屏等待时间
+            }
+
+            application dash {
+                live on;
+                dash on;
+                dash_path /usr/local/nginx/html/dash;
+            }
+        }
+    }
