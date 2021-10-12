@@ -49,11 +49,11 @@ spec:
     - name: port1935
       port: 1935
       targetPort: 1935
-      nodePort: 1935
+      nodePort: 31935
     - name: port80
       port: 80
       targetPort: 80
-      nodePort: 1980
+      nodePort: 31980
   type: NodePort
   selector:
     app: nginx-http-flv
